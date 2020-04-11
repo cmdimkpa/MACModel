@@ -1,0 +1,61 @@
+Project: MAC Layer Model Development
+
+based on the paper:
+
+S. Louvros, A. C. Iossifides, K. Aggelis, A. Baltagiannis and G. Economou, "A Semi-Analytical Macroscopic MAC Layer Model for LTE Uplink," 
+2012 5th International Conference on New Technologies, Mobility and Security (NTMS), Istanbul, 2012, pp. 1-5.
+
+1. Inputs/Constraints:
+
+    - MAC packet size (MAC PS)
+    - Number of retransmissions (N RET)
+    - Bit Error Rate (BER)
+    - Allocated resources with respect to [cell load] (LOAD)
+    - Delay budget requirements posed by QCI (DELAY)
+
+
+2. Outputs:
+
+    - Scheduling criteria: 
+
+        - QoS service profile
+        - CQI reports
+        - UE uplink buffer sizes
+
+
+
+3. Network Configuration:
+
+
+                                          |<------------------------------------------------------- eNodeB Radio Interface (RI) ------------------------------^^^^---------->|     
+                                          |                                                                           
+                                          |           |<----------------------------------------- MAC Layer ------------------------------------>| 
+             Air Interface (AI)           |___________|                                                               |
+                                          |           |MAC Packets =                                     |            |
+                                          |           |Roundup(M_I_var bits/(M_mac_payload bits +        |            |
+                                          |           |M_over_header bits))                              |____________|
+UE 1 -----------------------------------> |           |------------------------------------------------->|            |
+      (TCP/UDP IP Packet, M_I_var bits)   |           |                                                  |    MAC     |
+                                          |           |MAC Packets =                                     |  Simulator |QoS profile  ___________
+                                          | Physical  |Roundup(M_I_var bits/(M_mac_payload bits +        |  ________  |---------->|    MAC      |
+                                          |  Uplink   |M_over_header bits))                              | | MAC PS | |CQI Reports                IP transmission data rate
+UE 2 -----------------------------------> |  Control  |------------------------------------------------->|  ________  |---------->|   Scheduler |--------------------------->
+      (TCP/UDP IP Packet, M_I_var bits)   |  Channel  |                                                  | | N RET  | |UL Buf.Size
+                                          |  (PUCCH)  |MAC Packets =                                     |  ________  |---------->| ___________ |
+                                          |           |Roundup(M_I_var bits/(M_mac_payload bits +        | |  BER   | |          
+                                          |           |M_over_header bits))                              |  ________  |
+UE 3 -----------------------------------> |           |------------------------------------------------->| |  LOAD  | |
+      (TCP/UDP IP Packet, M_I_var bits)   |___________|                                                  |  ________  | 
+                                          |           |                                                  | |  DELAY | |
+                                          |           |                                                  |____________|
+                                          |                                                              |            |
+                                                                                                         |
+
+4. Project Build Milestones
+
+(a) Air Interface components - UE registration, IP packet transmission
+(b) Physical Uplink Control Channel - MAC Packets Modulation from transmitted IP packet
+(c) MAC Simulator - MAC PS, N RET, BER, LOAD, DELAY (using equations in paper)
+(d) Scheduler Inputs - QoS service profile, CQI reports, UE Uplink Buffer Sizes
+
+
