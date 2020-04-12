@@ -115,14 +115,15 @@ class NetworkDataManager:
         else:
             return None
 
-def log(request, response):
+def log(sessionId, request, response):
     def format():
-        return "<p><b>%s</b>: Req:[%s] Resp:[%s]" % (str(now()), request, response)
+        colorMap = {"IP_PACKETS_RECEIVED":"yellow", "MAC_PACKETS_MODULATED":"cyan"}
+        return '<html><body bgcolor="black"><p style="color: white; font-family: consolas; font-size:12;"><b>%s</b> [%s] <span style="color: %s;">[%s]</span> [%s]' % (str(now()), sessionId, colorMap[request], request, response)
     Log = NetLog.read_net_cookie("log")
     if Log:
-        Log.append(format()+" (#%s)</p>" % str(len(Log)+1))
+        Log.append(format()+" (#%s)</p></body></html>" % str(len(Log)+1))
     else:
-        Log = [format()+" (#1)</p>"]
+        Log = [format()+" (#1)</p></body></html>"]
     NetLog.write_net_cookie("log", Log)
     return None
 
@@ -172,7 +173,7 @@ def ModulatePackets():
         else:
             QueuedMACPackets = MAC_packets
         PhysicalUplinkControlChannel.write_net_cookie("QueuedMACPackets", QueuedMACPackets)
-        log("Modulation Request - %s IP packets - from device: %s" % (n_packets, ip_address), "Request ID: %s Successful,  %s MAC packets modulated, delay: %sms" % (sessionId, len(MAC_packets), delay))
+        log(sessionId, "MAC_PACKETS_MODULATED", "%s MAC packets from %s IP packets sent by %s delayed %sms" % (len(MAC_packets), n_packets, ip_address, delay))
         return "%s: %s" % (200, "Successfully modulated %s packets" % len(MAC_packets))
     else:
         return "%s: %s" % (404, "No session found")
@@ -190,7 +191,7 @@ def UERegistration(n_packets):
     else:
         UERegister = [session]
     AirInterface.write_net_cookie("UERegister", UERegister)
-    log("UE Registration Request from %s" % ip_address, "Successfully created session: %s bytes" % sys.getsizeof(session))
+    log(session[2], "IP_PACKETS_RECEIVED", "UE sent %s packets of %s bytes from %s" % (n_packets, sum([pickle.loads(loggable).header[0] for loggable in session[4]]), ip_address))
     return "%s: %s" % (200, "Successfully registered %s packets" % n_packets)
 
 if __name__ == "__main__":
