@@ -118,12 +118,12 @@ class NetworkDataManager:
 def log(sessionId, request, response):
     def format():
         colorMap = {"IP_PACKETS_RECEIVED":"yellow", "MAC_PACKETS_MODULATED":"cyan"}
-        return '<html><body bgcolor="black"><p style="color: white; font-family: consolas; font-size:12;"><b>%s</b> [%s] <span style="color: %s;">[%s]</span> [%s]' % (str(now()), sessionId, colorMap[request], request, response)
+        return str(now()), sessionId, colorMap[request], request, response
     Log = NetLog.read_net_cookie("log")
     if Log:
-        Log.append(format()+" (#%s)</p></body></html>" % str(len(Log)+1))
+        Log.append(format())
     else:
-        Log = [format()+" (#1)</p></body></html>"]
+        Log = [format()]
     NetLog.write_net_cookie("log", Log)
     return None
 
@@ -139,11 +139,16 @@ NetLog = NetworkDataManager("NetLog")
 
 #-------------- Network Endpoints --------------
 
-@app.route("/SubNetworkLTE/ActivityStream")
+@app.route("/SubNetworkLTE/NetLog")
 def ShowActivity():
     Log = NetLog.read_net_cookie("log")
     if Log:
-        return "".join(Log[::-1])
+        html = '<html><body bgcolor="black"><div style="color: white; font-family: consolas; font-size:12;">%s</div></body></html>'
+        spool = ""; count = -1
+        for log in Log[::-1]:
+            count+=1
+            spool += '<p><b>%s --> </b>[%s] <span style="color: %s;">[%s]</span> [%s]' % log + ' (#%s)</p>' % str(len(Log) - count)
+        return html % spool
     else:
         return "%s: %s" % (404, "No activity logs found")
 
