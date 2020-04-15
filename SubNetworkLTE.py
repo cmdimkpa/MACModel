@@ -174,7 +174,8 @@ def log(sessionId, request, response):
             "MAC_PACKETS_MODULATED": "cyan", 
             "RETRANSMITTED_PACKET": "orange", 
             "QUEUED_PACKET": "green",
-            "REJECTED_PACKET": "red"
+            "REJECTED_PACKET": "red",
+            "SORTED_PACKET": "pink"
         }
         return str(now()), sessionId, colorMap[request], request, response
     Log = NetLog.read_netbuffer("log")
@@ -209,6 +210,24 @@ def ShowActivity():
     else:
         return "%s: %s" % (404, "No activity logs found")
 
+@app.route("/SubNetworkLTE/Scheduler/Sorter")
+def SortPackets():
+    TransmissionQueue = MAC.read_netbuffer("TransmissionQueue")
+    packet = pickle.loads(TransmissionQueue.pop())  # release a MAC packet
+    MAC.write_netbuffer("TransmissionQueue", TransmissionQueue)
+    sessionId = packet.sessionId
+    SortedPackets = Scheduler.read_netbuffer("SortedPackets")
+    if SortedPackets:
+        if sessionId in SortedPackets:
+            SortedPackets[sessionId].append(packet.loggable())
+        else:
+            SortedPackets[sessionId] = [packet.loggable()]
+    else:
+        SortedPackets = {sessionId: [packet.loggable()]}
+    Scheduler.write_netbuffer("SortedPackets", SortedPackets)
+    log(sessionId, "SORTED_PACKET", "1 packet with id: %s was sorted (%s bits)" % (packet.header[5], packet.header[8]))
+    return "%s: %s" % (201, "Packet was sorted (%s bits)" % packet.header[8])
+
 @app.route("/SubNetworkLTE/MAC/Profiler")
 def ProfilePackets():
     def retransmit(packet):
@@ -221,7 +240,7 @@ def ProfilePackets():
             else:
                 RejectedPackets = [packet.loggable()]
             MAC.write_netbuffer("RejectedPackets", RejectedPackets)
-            log(packet.sessionId, "REJECTED_PACKET", "a packet with id %s was rejected (%s bits)" % (packet.header[5], packet.header[8]))
+            log(packet.sessionId, "REJECTED_PACKET", "1 packet with id: %s was rejected (%s bits)" % (packet.header[5], packet.header[8]))
             return "%s: %s" % (204, "Packet was rejected (%s bits)" % packet.header[8])
         else:
             packet.header[4]+=1
@@ -232,7 +251,7 @@ def ProfilePackets():
             else:
                 UERegister = [retransmitted_session]
             AirInterface.write_netbuffer("UERegister", UERegister) # retransmit IP session
-            log(packet.sessionId, "RETRANSMITTED_PACKET", "a packet with id %s was retransmitted (%s bits)" % (packet.header[5], packet.header[8]))
+            log(packet.sessionId, "RETRANSMITTED_PACKET", "1 packet with id: %s was retransmitted (%s bits)" % (packet.header[5], packet.header[8]))
             return "%s: %s" % (200, "Packet was retransmitted (%s bits)" % packet.header[8])
     def queue(packet):
         TransmissionQueue = MAC.read_netbuffer("TransmissionQueue")
@@ -241,7 +260,7 @@ def ProfilePackets():
         else:
             TransmissionQueue = [packet.loggable()]
         MAC.write_netbuffer("TransmissionQueue", TransmissionQueue) # queue this transmittable MAC packet
-        log(packet.sessionId, "QUEUED_PACKET", "a packet with id %s was queued (%s bits)" % (packet.header[5], packet.header[8]))
+        log(packet.sessionId, "QUEUED_PACKET", "1 packet with id: %s was queued (%s bits)" % (packet.header[5], packet.header[8]))
         return "%s: %s" % (201, "Packet was queued (%s bits)" % packet.header[8])
     packet = None
     try:
