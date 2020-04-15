@@ -16,7 +16,7 @@ CORS(app)
 
 #-------------- Network Initialization Parameters --------------
 
-server_host, server_port, BER_baseline, retransmission_limit, delay_budget = sys.argv[1:]
+server_host, server_port, BER_baseline, retransmission_limit, delay_budget, packet_duplication = sys.argv[1:]
 
 NETWORK_HOME = os.getcwd()
 if "\\" in NETWORK_HOME:
@@ -36,6 +36,7 @@ MAC_packet_size = int(18000/12) # max bits per TTI divided by number of sub-carr
 transmission_bit_limit_per_tti = 18000
 BER_baseline = float(BER_baseline) # Network Bit Error Rate baseline
 retransmission_limit = int(retransmission_limit) # Network packet retransmission limit
+packet_duplication = int(packet_duplication) # Network packet duplication
 effective_delay_budget = 300*int(delay_budget) # effective packet delay budget (account for hardware limitations)
 min_IP_packet_size = 500
 max_IP_packet_size = 2000
@@ -84,7 +85,7 @@ def MAC2IPSession(MAC_packet):
     IP_packet.header[3] += MAC_packet.header[0]  # add retransmission delay
     IP_packet.header[4] = MAC_packet.header[4]  # update retransmissions
     IP_packet.payload_bits = MAC_packet.header[3]
-    return [MAC_packet.header[1], session_time, IP_packet.sessionId, 1, [IP_packet.loggable()]]
+    return [MAC_packet.header[1], session_time, IP_packet.sessionId, 1, duplicate([IP_packet.loggable()], packet_duplication)]
 
 class MAC_Packet:
     def __init__(self, sessionId, trans_bits, source, delay, source_bits, retransmissions, packetId, packet_index, n_mac_packets, size):
@@ -125,10 +126,17 @@ def transcoding_plan(x, b):
 def packet_size():
     return int(min_IP_packet_size + random()*(max_IP_packet_size - min_IP_packet_size))
 
+def duplicate(array, n):
+    container = []
+    for i in range(n):
+        container+=array
+    return container
+
 def UESession(ip_address, n_packets):
+    # also features packet duplication
     sessionId = Id()
     session_time = now()
-    return [ip_address, session_time, sessionId, n_packets, [IP_Packet(sessionId, packet_size(), ip_address, session_time).loggable() for i in range(n_packets)]]
+    return [ip_address, session_time, sessionId, n_packets, duplicate([IP_Packet(sessionId, packet_size(), ip_address, session_time).loggable() for i in range(n_packets)], packet_duplication)]
     
 class NetworkDataManager:
     def __init__(self, netbuffer_host_dir):
