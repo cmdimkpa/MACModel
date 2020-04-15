@@ -212,21 +212,24 @@ def ShowActivity():
 
 @app.route("/SubNetworkLTE/Scheduler/Sorter")
 def SortPackets():
-    TransmissionQueue = MAC.read_netbuffer("TransmissionQueue")
-    packet = pickle.loads(TransmissionQueue.pop())  # release a MAC packet
-    MAC.write_netbuffer("TransmissionQueue", TransmissionQueue)
-    sessionId = packet.sessionId
-    SortedPackets = Scheduler.read_netbuffer("SortedPackets")
-    if SortedPackets:
-        if sessionId in SortedPackets:
-            SortedPackets[sessionId].append(packet.loggable())
+    try:
+        TransmissionQueue = MAC.read_netbuffer("TransmissionQueue")
+        packet = pickle.loads(TransmissionQueue.pop())  # release a MAC packet
+        MAC.write_netbuffer("TransmissionQueue", TransmissionQueue)
+        sessionId = packet.sessionId
+        SortedPackets = Scheduler.read_netbuffer("SortedPackets")
+        if SortedPackets:
+            if sessionId in SortedPackets:
+                SortedPackets[sessionId].append(packet.loggable())
+            else:
+                SortedPackets[sessionId] = [packet.loggable()]
         else:
-            SortedPackets[sessionId] = [packet.loggable()]
-    else:
-        SortedPackets = {sessionId: [packet.loggable()]}
-    Scheduler.write_netbuffer("SortedPackets", SortedPackets)
-    log(sessionId, "SORTED_PACKET", "1 packet with id: %s was sorted (%s bits)" % (packet.header[5], packet.header[8]))
-    return "%s: %s" % (201, "Packet was sorted (%s bits)" % packet.header[8])
+            SortedPackets = {sessionId: [packet.loggable()]}
+        Scheduler.write_netbuffer("SortedPackets", SortedPackets)
+        log(sessionId, "SORTED_PACKET", "1 packet with id: %s was sorted (%s bits)" % (packet.header[5], packet.header[8]))
+        return "%s: %s" % (201, "Packet was sorted (%s bits)" % packet.header[8])
+    except:
+        return "%s: %s" % (404, "No packet found")
 
 @app.route("/SubNetworkLTE/MAC/Profiler")
 def ProfilePackets():
