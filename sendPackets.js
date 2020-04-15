@@ -1,7 +1,7 @@
 // send IP packets to network every burst interval
 
-let burstSize = 50;
-let burstInterval = 5000;
+let burstSize = 10;
+let burstInterval = 20000;
 let networkHost = "localhost";
 let networkPort = 63457;
 let request = require('request');
