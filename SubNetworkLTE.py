@@ -35,8 +35,8 @@ NETWORK_HOME+=slash
 MAC_packet_size = int(18000/12) # max bits per TTI divided by number of sub-carriers
 transmission_bit_limit_per_tti = 18000
 BER_baseline = float(BER_baseline) # Network Bit Error Rate baseline
-retransmission_limit = int(retransmission_limit) # Network MAC packet retransmission limit
-effective_delay_budget = 300*int(delay_budget) # effective Network MAC packet delay budget
+retransmission_limit = int(retransmission_limit) # Network packet retransmission limit
+effective_delay_budget = 300*int(delay_budget) # effective packet delay budget (account for hardware limitations)
 min_IP_packet_size = 500
 max_IP_packet_size = 2000
 
