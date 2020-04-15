@@ -1,12 +1,16 @@
-// modulate IP packets every 100ms
+// modulate IP packets to MAC packets every interval
 
-let modulationInterval = 100;
+let modulationInterval = 500;
 let networkHost = "localhost";
 let networkPort = 63457;
 let request = require('request');
+let events = 0;
 
 function modulatePackets() {
-    request.get(`http://${networkHost}:${networkPort}/SubNetworkLTE/PhysicalUplinkControlChannel/Modulation`, (error, res, body) => { })
+    events++;
+    request.get(`http://${networkHost}:${networkPort}/SubNetworkLTE/PhysicalUplinkControlChannel/Modulation`, (error, res, body) => { 
+        console.log(`${body} (${events})`)
+    })
 }
 
 let modulator = setInterval(modulatePackets, modulationInterval);

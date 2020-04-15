@@ -1,13 +1,17 @@
-// send packets to network every 10s
+// send IP packets to network every burst interval
 
 let burstSize = 50;
-let burstInterval = 10000;
+let burstInterval = 5000;
 let networkHost = "localhost";
 let networkPort = 63457;
 let request = require('request');
+let events = 0;
 
 function sendPackets() {
-    request.get(`http://${networkHost}:${networkPort}/SubNetworkLTE/AirInterface/UERegistration/${burstSize}`, (error, res, body) => {})
+    events++;
+    request.get(`http://${networkHost}:${networkPort}/SubNetworkLTE/AirInterface/UERegistration/${burstSize}`, (error, res, body) => {
+        console.log(`${body} (${events})`)
+    })
 }
 
 let burst = setInterval(sendPackets, burstInterval);

@@ -36,7 +36,7 @@ MAC_packet_size = int(18000/12) # max bits per TTI divided by number of sub-carr
 transmission_bit_limit_per_tti = 18000
 BER_baseline = float(BER_baseline) # Network Bit Error Rate baseline
 retransmission_limit = int(retransmission_limit) # Network MAC packet retransmission limit
-delay_budget = int(delay_budget) # Network MAC packet delay budget
+effective_delay_budget = 300*int(delay_budget) # effective Network MAC packet delay budget
 min_IP_packet_size = 500
 max_IP_packet_size = 2000
 
@@ -62,7 +62,7 @@ def load_error_multiplier():
         for packet in QueuedMACPackets:
             total_delay += packet.header[0]
         avg_delay = total_delay/n_packets
-        return avg_delay/delay_budget
+        return avg_delay/effective_delay_budget
     except:
         return 1
     
@@ -73,10 +73,18 @@ def is_transcoding_error(noise_level):
 class IP_Packet:
     def __init__(self, sessionId, size, source, time):
         self.sessionId = sessionId
-        self.header = [size, source, time]
+        self.header = [size, source, time, 0, 0]
         self.payload_bits = "".join([str(int(random()*2)) for i in range(size)]).encode()
     def loggable(self):
         return pickle.dumps(self)
+
+def MAC2IPSession(MAC_packet):
+    session_time = now()
+    IP_packet = IP_Packet(MAC_packet.sessionId, MAC_packet.header[8], MAC_packet.header[1], session_time)
+    IP_packet.header[3] += MAC_packet.header[0]  # add retransmission delay
+    IP_packet.header[4] = MAC_packet.header[4]  # update retransmissions
+    IP_packet.payload_bits = MAC_packet.header[3]
+    return [MAC_packet.header[1], session_time, IP_packet.sessionId, 1, [IP_packet.loggable()]]
 
 class MAC_Packet:
     def __init__(self, sessionId, trans_bits, source, delay, source_bits, retransmissions, packetId, packet_index, n_mac_packets, size):
@@ -153,7 +161,13 @@ class NetworkDataManager:
 
 def log(sessionId, request, response):
     def format():
-        colorMap = {"IP_PACKETS_RECEIVED":"yellow", "MAC_PACKETS_MODULATED":"cyan"}
+        colorMap = {
+            "IP_PACKETS_RECEIVED": "yellow", 
+            "MAC_PACKETS_MODULATED": "cyan", 
+            "RETRANSMITTED_PACKET": "orange", 
+            "QUEUED_PACKET": "green",
+            "REJECTED_PACKET": "red"
+        }
         return str(now()), sessionId, colorMap[request], request, response
     Log = NetLog.read_netbuffer("log")
     if Log:
@@ -187,6 +201,53 @@ def ShowActivity():
     else:
         return "%s: %s" % (404, "No activity logs found")
 
+@app.route("/SubNetworkLTE/MAC/Profiler")
+def ProfilePackets():
+    def retransmit(packet):
+        # check if retransmission_limit reached
+        if packet.header[4] + 1 > retransmission_limit:
+            # reject this MAC packet
+            RejectedPackets = MAC.read_netbuffer("RejectedPackets")
+            if RejectedPackets:
+                RejectedPackets.append(packet.loggable())
+            else:
+                RejectedPackets = [packet.loggable()]
+            MAC.write_netbuffer("RejectedPackets", RejectedPackets)
+            log(packet.sessionId, "REJECTED_PACKET", "a packet with id %s was rejected (%s bits)" % (packet.header[5], packet.header[8]))
+            return "%s: %s" % (204, "Packet was rejected (%s bits)" % packet.header[8])
+        else:
+            packet.header[4]+=1
+            retransmitted_session = MAC2IPSession(packet) # convert MAC packet back to IP session
+            UERegister = AirInterface.read_netbuffer("UERegister")
+            if UERegister:
+                UERegister.append(retransmitted_session)  # lower priority for unvalidated retransmitted packets
+            else:
+                UERegister = [retransmitted_session]
+            AirInterface.write_netbuffer("UERegister", UERegister) # retransmit IP session
+            log(packet.sessionId, "RETRANSMITTED_PACKET", "a packet with id %s was retransmitted (%s bits)" % (packet.header[5], packet.header[8]))
+            return "%s: %s" % (200, "Packet was retransmitted (%s bits)" % packet.header[8])
+    def queue(packet):
+        TransmissionQueue = MAC.read_netbuffer("TransmissionQueue")
+        if TransmissionQueue:
+            TransmissionQueue.insert(0, packet.loggable())  # FIFO
+        else:
+            TransmissionQueue = [packet.loggable()]
+        MAC.write_netbuffer("TransmissionQueue", TransmissionQueue) # queue this transmittable MAC packet
+        log(packet.sessionId, "QUEUED_PACKET", "a packet with id %s was queued (%s bits)" % (packet.header[5], packet.header[8]))
+        return "%s: %s" % (201, "Packet was queued (%s bits)" % packet.header[8])
+    packet = None
+    try:
+        QueuedMACPackets = PhysicalUplinkControlChannel.read_netbuffer("QueuedMACPackets")
+        packet = pickle.loads(QueuedMACPackets.pop()) # release a MAC packet
+        PhysicalUplinkControlChannel.write_netbuffer("QueuedMACPackets", QueuedMACPackets)
+        # test MAC packet for errors, handle contextually
+        if packet.payload_bits == packet.header[3]:
+            return queue(packet)
+        else:
+            return retransmit(packet)
+    except:
+        return "%s: %s" % (404, "No packet found")
+
 @app.route("/SubNetworkLTE/PhysicalUplinkControlChannel/Modulation")
 def ModulatePackets():
     session = None
@@ -199,6 +260,7 @@ def ModulatePackets():
         # Packet Modulation
         delay = ms_elapsed(session_time); modulated = 0
         for packet in ip_packets:
+            delay+=packet.header[3]  # add retransmission delay
             mod_started = now()
             MAC_packets = []
             packetId = Id()
@@ -208,8 +270,8 @@ def ModulatePackets():
                 packet_index+=1
                 source_bits, trans_bits = band
                 mod_delay = ms_elapsed(mod_started); delay+=mod_delay # add modulation delay
-                # FIFO Queue
-                MAC_packets.insert(0, MAC_Packet(sessionId, trans_bits, ip_address, delay, source_bits, 0, packetId, packet_index, len(field), len(trans_bits)).loggable())
+                # FIFO Queue, preserve retransmissions
+                MAC_packets.insert(0, MAC_Packet(sessionId, trans_bits, ip_address, delay, source_bits, packet.header[4], packetId, packet_index, len(field), len(trans_bits)).loggable())
             modulated+=len(MAC_packets)
             QueuedMACPackets = PhysicalUplinkControlChannel.read_netbuffer("QueuedMACPackets")
             if QueuedMACPackets:
