@@ -16,7 +16,7 @@ CORS(app)
 
 #-------------- Network Initialization Parameters --------------
 
-server_host, server_port = sys.argv[1:]
+server_host, server_port, BER_baseline, retransmission_limit, delay_budget = sys.argv[1:]
 
 NETWORK_HOME = os.getcwd()
 if "\\" in NETWORK_HOME:
@@ -25,11 +25,20 @@ else:
     slash = "/"
 NETWORK_HOME+=slash
 
-#-------------- Network Constants ------
+#-------------- LTE Network Constants ------
 
-default_MAC_packet_size = 1500  # default MAC packet size (MTU) of 1.5 KB for LTE
-min_IP_packet_size = 1000
-max_IP_packet_size = 5000
+# Transmission Bandwidth = 20MHz
+# Number of RBs = 100 blocks
+# RB Frequency = 180KHz
+# 180 bits per block each TTI (1ms) x 100 blocks = 18000 bits per TTI (1ms)
+# Number of sub-carriers = 12
+MAC_packet_size = int(18000/12) # max bits per TTI divided by number of sub-carriers
+transmission_bit_limit_per_tti = 18000
+BER_baseline = float(BER_baseline) # Network Bit Error Rate baseline
+retransmission_limit = int(retransmission_limit) # Network MAC packet retransmission limit
+delay_budget = int(delay_budget) # Network MAC packet delay budget
+min_IP_packet_size = 500
+max_IP_packet_size = 2000
 
 #-------------- Base Classes --------------
 
@@ -44,6 +53,23 @@ def Id():
     hasher = md5(); hasher.update(str(now()).encode())
     return hasher.hexdigest()
 
+def load_error_multiplier():
+    # higher packet delays in the PUCCH signal higher cell loads and a higher BER
+    try:
+        QueuedMACPackets = [pickle.loads(loggable) for loggable in PhysicalUplinkControlChannel.read_netbuffer("QueuedMACPackets")]
+        n_packets = len(QueuedMACPackets)
+        total_delay = 0
+        for packet in QueuedMACPackets:
+            total_delay += packet.header[0]
+        avg_delay = total_delay/n_packets
+        return avg_delay/delay_budget
+    except:
+        return 1
+    
+def is_transcoding_error(noise_level):
+    # cell loading increases the bit error rate
+    return noise_level < BER_baseline*load_error_multiplier()
+
 class IP_Packet:
     def __init__(self, sessionId, size, source, time):
         self.sessionId = sessionId
@@ -53,24 +79,31 @@ class IP_Packet:
         return pickle.dumps(self)
 
 class MAC_Packet:
-    def __init__(self, sessionId, bits, source, delay):
+    def __init__(self, sessionId, trans_bits, source, delay, source_bits, retransmissions, packetId, packet_index, n_mac_packets, size):
         self.sessionId = sessionId
-        self.header = [delay, source, now()]
-        self.payload_bits = bits
+        self.header = [delay, source, now(), source_bits, retransmissions, packetId, packet_index, n_mac_packets, size]
+        self.payload_bits = trans_bits
     def loggable(self):
         return pickle.dumps(self)
 
-def split_bits_by_plan(bits, plan):
+def transcode_bits(bits, plan):
+    noise_level = random()*random()  # fixed random noise level during transcoding
     field = [x for x in bits.decode()]
     bands = []
     for size in plan:
-        sub = []
+        source = []; trans = []
         for i in range(size):
-            sub.append(field.pop())
-        bands.append("".join(sub).encode())
+            bit = field.pop(0) # preserve bit order
+            source.append(bit)
+            # bit error will occur if cell load increases baseline BER above current noise level
+            if is_transcoding_error(noise_level):
+                trans.append(str(abs(int(float(bit)-1))))
+            else:
+                trans.append(bit)
+        bands.append(["".join(source).encode(), "".join(trans).encode()])
     return bands
 
-def split_into(x, b):
+def transcoding_plan(x, b):
     divs = x // b
     rem = x % b
     if divs:
@@ -90,41 +123,44 @@ def UESession(ip_address, n_packets):
     return [ip_address, session_time, sessionId, n_packets, [IP_Packet(sessionId, packet_size(), ip_address, session_time).loggable() for i in range(n_packets)]]
     
 class NetworkDataManager:
-    def __init__(self, net_cookie_host_dir):
-        self.net_cookie_path = [NETWORK_HOME, net_cookie_host_dir]
+    def __init__(self, netbuffer_host_dir):
+        self.netbuffer_path = [NETWORK_HOME, netbuffer_host_dir]
         try:
-            os.mkdir(Path(self.net_cookie_path))
+            os.mkdir(Path(self.netbuffer_path))
         except:
             pass
-        self.net_cookies = {}
-    def register_new_net_cookie(self, net_cookie_type):
-        self.net_cookies[net_cookie_type] = Path(self.net_cookie_path+["%s.net_cookie" % net_cookie_type])
-    def write_net_cookie(self, net_cookie_type, data):
-        if net_cookie_type not in self.net_cookies:
-            self.register_new_net_cookie(net_cookie_type)
-        p = open(self.net_cookies[net_cookie_type], "wb+")
-        p.write(repr(data).encode())
+        self.netbuffers = {}
+    def register_new_netbuffer(self, netbuffer_type):
+        self.netbuffers[netbuffer_type] = Path(self.netbuffer_path+["%s.netbuffer" % netbuffer_type])
+    def write_netbuffer(self, netbuffer_type, data):
+        if netbuffer_type not in self.netbuffers:
+            self.register_new_netbuffer(netbuffer_type)
+        p = open(self.netbuffers[netbuffer_type], "wb+")
+        p.write(pickle.dumps(data))
         p.close()
         return data
-    def read_net_cookie(self, net_cookie_type):
-        if net_cookie_type in self.net_cookies:
-            p = open(self.net_cookies[net_cookie_type], "rb+")
-            data = eval(p.read().decode())
-            p.close()
-            return data
-        else:
+    def read_netbuffer(self, netbuffer_type):
+        try:
+            if netbuffer_type in self.netbuffers:
+                p = open(self.netbuffers[netbuffer_type], "rb+")
+                data = pickle.loads(p.read())
+                p.close()
+                return data
+            else:
+                return None
+        except:
             return None
 
 def log(sessionId, request, response):
     def format():
         colorMap = {"IP_PACKETS_RECEIVED":"yellow", "MAC_PACKETS_MODULATED":"cyan"}
         return str(now()), sessionId, colorMap[request], request, response
-    Log = NetLog.read_net_cookie("log")
+    Log = NetLog.read_netbuffer("log")
     if Log:
         Log.append(format())
     else:
         Log = [format()]
-    NetLog.write_net_cookie("log", Log)
+    NetLog.write_netbuffer("log", Log)
     return None
 
 #-------------- Component Data Models --------------
@@ -132,7 +168,6 @@ def log(sessionId, request, response):
 AirInterface = NetworkDataManager("AirInterface")
 PhysicalUplinkControlChannel = NetworkDataManager("PhysicalUplinkControlChannel")
 MAC = NetworkDataManager("MAC")
-MAC.write_net_cookie("MAC_packet_size", default_MAC_packet_size)
 Scheduler = NetworkDataManager("Scheduler")
 Transmission = NetworkDataManager("Transmission")
 NetLog = NetworkDataManager("NetLog")
@@ -141,7 +176,7 @@ NetLog = NetworkDataManager("NetLog")
 
 @app.route("/SubNetworkLTE/NetLog")
 def ShowActivity():
-    Log = NetLog.read_net_cookie("log")
+    Log = NetLog.read_netbuffer("log")
     if Log:
         html = '<html><body bgcolor="black"><div style="color: white; font-family: consolas; font-size:12;">%s</div></body></html>'
         spool = ""; count = -1
@@ -154,32 +189,36 @@ def ShowActivity():
 
 @app.route("/SubNetworkLTE/PhysicalUplinkControlChannel/Modulation")
 def ModulatePackets():
-    UERegister = AirInterface.read_net_cookie("UERegister")
     session = None
-    try:
+    UERegister = AirInterface.read_netbuffer("UERegister")
+    if UERegister:
         session = UERegister.pop()
-        AirInterface.write_net_cookie("UERegister", UERegister)
-    except:
-        pass
-    if session:
+        AirInterface.write_netbuffer("UERegister", UERegister)
         ip_address, session_time, sessionId, n_packets, ip_packets_loggable = session
         ip_packets = [pickle.loads(log) for log in ip_packets_loggable]
         # Packet Modulation
-        MAC_packets = []
-        MAC_packet_size = MAC.read_net_cookie("MAC_packet_size")
-        delay = ms_elapsed(session_time)
+        delay = ms_elapsed(session_time); modulated = 0
         for packet in ip_packets:
-            field = split_bits_by_plan(packet.payload_bits, split_into(packet.header[0], MAC_packet_size))
-            for bits in field:
-                MAC_packets.insert(0, MAC_Packet(sessionId, bits, ip_address, delay).loggable()) # FIFO Queue
-        QueuedMACPackets = PhysicalUplinkControlChannel.read_net_cookie("QueuedMACPackets")
-        if QueuedMACPackets:
-            QueuedMACPackets += MAC_packets
-        else:
-            QueuedMACPackets = MAC_packets
-        PhysicalUplinkControlChannel.write_net_cookie("QueuedMACPackets", QueuedMACPackets)
-        log(sessionId, "MAC_PACKETS_MODULATED", "%s MAC packets from %s IP packets sent by %s delayed %sms" % (len(MAC_packets), n_packets, ip_address, delay))
-        return "%s: %s" % (200, "Successfully modulated %s packets" % len(MAC_packets))
+            mod_started = now()
+            MAC_packets = []
+            packetId = Id()
+            field = transcode_bits(packet.payload_bits, transcoding_plan(packet.header[0], MAC_packet_size))
+            packet_index = -1
+            for band in field:
+                packet_index+=1
+                source_bits, trans_bits = band
+                mod_delay = ms_elapsed(mod_started); delay+=mod_delay # add modulation delay
+                # FIFO Queue
+                MAC_packets.insert(0, MAC_Packet(sessionId, trans_bits, ip_address, delay, source_bits, 0, packetId, packet_index, len(field), len(trans_bits)).loggable())
+            modulated+=len(MAC_packets)
+            QueuedMACPackets = PhysicalUplinkControlChannel.read_netbuffer("QueuedMACPackets")
+            if QueuedMACPackets:
+                QueuedMACPackets = MAC_packets + QueuedMACPackets # ensure FIFO
+            else:
+                QueuedMACPackets = MAC_packets
+            PhysicalUplinkControlChannel.write_netbuffer("QueuedMACPackets", QueuedMACPackets)
+            log(sessionId, "MAC_PACKETS_MODULATED", "%s MAC packets from session %s delayed %sms" % (len(MAC_packets), sessionId, mod_delay))
+        return "%s: %s" % (200, "Successfully modulated %s packets" % modulated)
     else:
         return "%s: %s" % (404, "No session found")
 
@@ -190,13 +229,13 @@ def UERegistration(n_packets):
         session = UESession(ip_address, int(n_packets))
     except:
         return "%s: %s" % (400, "Error creating session: packet_size not specified")
-    UERegister = AirInterface.read_net_cookie("UERegister")
+    UERegister = AirInterface.read_netbuffer("UERegister")
     if UERegister:
         UERegister.insert(0, session)  #FIFO Queue
     else:
         UERegister = [session]
-    AirInterface.write_net_cookie("UERegister", UERegister)
-    log(session[2], "IP_PACKETS_RECEIVED", "UE sent %s packets of %s bytes from %s" % (n_packets, sum([pickle.loads(loggable).header[0] for loggable in session[4]]), ip_address))
+    AirInterface.write_netbuffer("UERegister", UERegister)
+    log(session[2], "IP_PACKETS_RECEIVED", "UE at %s sent %s IP packets of %s bits" % (ip_address, n_packets, sum([pickle.loads(loggable).header[0] for loggable in session[4]])))
     return "%s: %s" % (200, "Successfully registered %s packets" % n_packets)
 
 if __name__ == "__main__":
