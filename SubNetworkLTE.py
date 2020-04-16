@@ -1,6 +1,12 @@
 #============== Python3 Flask Model of LTE Sub Network ==============
+
 #   Version: 1.00
-#   Monty Dimkpa
+#   Author: Monty Dimkpa
+
+#====================================================================
+
+
+#-------------- Importing required Python libraries --------------
 
 from flask import Flask, request
 from flask_cors import CORS
@@ -72,14 +78,16 @@ def is_transcoding_error(noise_level):
     return noise_level < BER_baseline*load_error_multiplier()
 
 class IP_Packet:
+    # This class creates an IP Packet
     def __init__(self, sessionId, size, source, time):
         self.sessionId = sessionId
         self.header = [size, source, time, 0, 0]
-        self.payload_bits = "".join([str(int(random()*2)) for i in range(size)]).encode()
+        self.payload_bits = "".join([str(int(random()*2)) for i in range(size)]).encode()  # initial random bits in IP packet
     def loggable(self):
         return pickle.dumps(self)
 
 def MAC2IPSession(MAC_packet):
+    # this function converts a MAC packet back to an IP session for retransmission
     session_time = now()
     IP_packet = IP_Packet(MAC_packet.sessionId, MAC_packet.header[8], MAC_packet.header[1], session_time)
     IP_packet.header[3] += MAC_packet.header[0]  # add retransmission delay
@@ -88,6 +96,7 @@ def MAC2IPSession(MAC_packet):
     return [MAC_packet.header[1], session_time, IP_packet.sessionId, 1, duplicate([IP_packet.loggable()], packet_duplication)]
 
 class MAC_Packet:
+    # this class creates a MAC packet
     def __init__(self, sessionId, trans_bits, source, delay, source_bits, retransmissions, packetId, packet_index, n_mac_packets, size):
         self.sessionId = sessionId
         self.header = [delay, source, now(), source_bits, retransmissions, packetId, packet_index, n_mac_packets, size]
@@ -96,6 +105,7 @@ class MAC_Packet:
         return pickle.dumps(self)
 
 def transcode_bits(bits, plan):
+    # this is the bit transcoding function that copies bits from an IP packet stream into a new MAC packet
     noise_level = random()*random()  # fixed random noise level during transcoding
     field = [x for x in bits.decode()]
     bands = []
@@ -113,6 +123,7 @@ def transcode_bits(bits, plan):
     return bands
 
 def transcoding_plan(x, b):
+    # function for creating a plan to split a bit stream into smaller streams that are not greater than the MAC packet size
     divs = x // b
     rem = x % b
     if divs:
@@ -124,21 +135,24 @@ def transcoding_plan(x, b):
         return [x]
 
 def packet_size():
+    # returns an initial random size for an IP packet
     return int(min_IP_packet_size + random()*(max_IP_packet_size - min_IP_packet_size))
 
 def duplicate(array, n):
+    # function to duplicate the IP packets n times given the original array
     container = []
     for i in range(n):
         container+=array
     return container
 
 def UESession(ip_address, n_packets):
-    # also features packet duplication
+    # authenticates a UE and creates a session to handle the IP packet uplink
     sessionId = Id()
     session_time = now()
     return [ip_address, session_time, sessionId, n_packets, duplicate([IP_Packet(sessionId, packet_size(), ip_address, session_time).loggable() for i in range(n_packets)], packet_duplication)]
     
 class NetworkDataManager:
+    # this class manages the data I/O in the Network
     def __init__(self, netbuffer_host_dir):
         self.netbuffer_path = [NETWORK_HOME, netbuffer_host_dir]
         try:
@@ -168,6 +182,7 @@ class NetworkDataManager:
             return None
 
 def log(sessionId, request, response):
+    # this is the logging function that produces color-coded records of events that occur in the network
     def format():
         colorMap = {
             "IP_PACKETS_RECEIVED": "yellow", 
@@ -188,15 +203,16 @@ def log(sessionId, request, response):
 
 #-------------- Component Data Models --------------
 
-AirInterface = NetworkDataManager("AirInterface")
-PhysicalUplinkControlChannel = NetworkDataManager("PhysicalUplinkControlChannel")
-MAC = NetworkDataManager("MAC")
-Scheduler = NetworkDataManager("Scheduler")
-Transmission = NetworkDataManager("Transmission")
-NetLog = NetworkDataManager("NetLog")
+AirInterface = NetworkDataManager("AirInterface") # Handles initial packets entering the network
+PhysicalUplinkControlChannel = NetworkDataManager("PhysicalUplinkControlChannel") # Modulates IP packets to MAC packets
+MAC = NetworkDataManager("MAC") # validates packets and handles retransmissions or queueing of verified packets
+Scheduler = NetworkDataManager("Scheduler") # sorts verified packets and schedules transmission of packets
+Transmission = NetworkDataManager("Transmission") # transmits and terminates scheduled packets
+NetLog = NetworkDataManager("NetLog") # records events in the network
 
 #-------------- Network Endpoints --------------
 
+# simulation agent firing mechanism for returning activity logs
 @app.route("/SubNetworkLTE/NetLog")
 def ShowActivity():
     Log = NetLog.read_netbuffer("log")
@@ -210,6 +226,7 @@ def ShowActivity():
     else:
         return "%s: %s" % (404, "No activity logs found")
 
+# simulation agent firing mechanism for sorting verified packets
 @app.route("/SubNetworkLTE/Scheduler/Sorter")
 def SortPackets():
     try:
@@ -230,7 +247,8 @@ def SortPackets():
         return "%s: %s" % (201, "Packet was sorted (%s bits)" % packet.header[8])
     except:
         return "%s: %s" % (404, "No packet found")
-
+    
+# simulation agent firing mechanism for validating packet integrity
 @app.route("/SubNetworkLTE/MAC/Profiler")
 def ProfilePackets():
     def retransmit(packet):
@@ -278,6 +296,7 @@ def ProfilePackets():
     except:
         return "%s: %s" % (404, "No packet found")
 
+# simulation agent firing mechanism for transcoding IP packets to MAC packets    
 @app.route("/SubNetworkLTE/PhysicalUplinkControlChannel/Modulation")
 def ModulatePackets():
     session = None
@@ -314,6 +333,7 @@ def ModulatePackets():
     else:
         return "%s: %s" % (404, "No session found")
 
+# simulation agent firing mechanism for authenticating UE sessions and receiving IP packets    
 @app.route("/SubNetworkLTE/AirInterface/UERegistration/<path:n_packets>")
 def UERegistration(n_packets):
     ip_address = request.remote_addr
